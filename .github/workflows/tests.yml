@@ -1,0 +1,31 @@
+name: Tests
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  # The job id `test` IS the required status check. Do not rename it.
+  test:
+    runs-on: ubuntu-latest
+    env:
+      APP_ENV: test
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: uv sync --dev
+      - name: Check formatting (black)
+        run: uv run black --check .
+      - name: Type check (mypy)
+        run: uv run mypy
+      # The fast gate excludes the integration tier; see standards/testing.md
+      - name: Run tests
+        run: uv run pytest tests/ -m "not integration" -v --tb=short --cov=app --cov-report=xml

@@ -1,0 +1,33 @@
+# === Secrets & local credentials — never commit (org secrets baseline) ===
+.env
+.env.*
+# allow-list committed example/templates only
+!.env.example
+# live MCP bearer tokens / DB passwords (control-api leak, 2026-07-11)
+.mcp.json
+*.pem
+*.key
+
+# === Claude Code state — oauth + MCP bearer tokens (claude.json leak, PR #7) ===
+.claude.json
+claude.json
+# per-machine; a tracked copy also dirties hatch-vcs builds. The trailing * also catches
+# Claude Code's settings.local.json.tmp.<pid>.<hash> crash leftovers, which the bare path
+# misses — one stray tmp file keeps .claude/ permanently untracked-dirty
+.claude/settings.local.json*
+# per-machine worktrees; a leftover one is also globbed by the repo's own linter and
+# test runner, which reports as phantom failures in the repo's own files (imp-warden #129)
+.claude/worktrees/
+
+# === OS / editor cruft ===
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+.coverage
+coverage.xml
