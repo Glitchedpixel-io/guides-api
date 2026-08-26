@@ -1,0 +1,313 @@
+{#-
+  The procedure sheet, flattened from the Claude Design canvas.
+
+  Everything here is self-contained: the stylesheet is inlined, drawings are embedded as
+  inline SVG or data URIs, and the QR is generated in-process. Nothing is fetched at render
+  time, so a PDF produced today reproduces byte-for-byte tomorrow on a machine with no
+  network.
+-#}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ guide.doc_number }} Rev {{ revision.rev_label }} — {{ guide.title }}</title>
+<style>{{ css }}</style>
+<style>
+{#- Fixed-box offsets are measured from the page CONTENT origin in WeasyPrint, not from the
+    paper edge, so they can only be computed once the page size and margins are known. -#}
+@page {
+  size: {{ page_size }};
+  margin: {{ frame.margin_top }}in {{ frame.margin_right }}in {{ frame.margin_bottom }}in {{ frame.margin_left }}in;
+}
+.frame {
+  top: {{ frame.top }}in; left: {{ frame.left }}in;
+  width: {{ frame.width }}in; height: {{ frame.height }}in;
+}
+.reg--tl { top: {{ frame.reg_top }}in; left: {{ frame.reg_left }}in; }
+.reg--tr { top: {{ frame.reg_top }}in; left: {{ frame.reg_right }}in; }
+.reg--bl { top: {{ frame.reg_bottom }}in; left: {{ frame.reg_left }}in; }
+.reg--br { top: {{ frame.reg_bottom }}in; left: {{ frame.reg_right }}in; }
+{#- Page 1 has no running header, but the margins are uniform so its header band is empty.
+    The masthead is the only block that ever lands there, so it simply reclaims the band. -#}
+.masthead { margin-top: -{{ frame.header_band }}in; }
+</style>
+</head>
+<body>
+
+{#- ------------------------------------------------- sheet furniture ------ -#}
+<div class="frame frame--{{ style.frame_weight }}"><div class="frame__inner"></div></div>
+{%- if style.registration_marks %}
+{%- for corner in ["tl", "tr", "bl", "br"] %}
+<div class="reg reg--{{ corner }}"><div class="reg__v"></div><div class="reg__h"></div></div>
+{%- endfor %}
+{%- endif %}
+
+{#- ------------------------------------------------- running elements ----- -#}
+{#- Pulled into @page margin boxes; page 1 suppresses the header and takes the tall
+    title-block footer instead. -#}
+
+<div class="runhead">
+  <div class="runhead__row">
+    {%- if logo_src %}
+    <div class="runhead__logo"><img src="{{ logo_src }}" alt=""></div>
+    {%- endif %}
+    <div style="flex:1">
+      <div class="eyebrow">{{ guide.doc_number }} · Rev {{ revision.rev_label }} · Continued</div>
+      <div class="runhead__title">{{ guide.title }}</div>
+    </div>
+    {%- if revision.units or revision.tolerance %}
+    <div class="runhead__meta">
+      {%- if revision.units %}UNITS {{ revision.units }}{% endif %}
+      {%- if revision.units and revision.tolerance %}<br>{% endif %}
+      {%- if revision.tolerance %}TOL {{ revision.tolerance }}{% endif %}
+    </div>
+    {%- endif %}
+  </div>
+</div>
+
+{#- One footer on every page, not a special one for page 1. Two reasons: the page margins
+    must stay uniform for the fixed frame to land in the same place on every sheet, and a
+    title block on every sheet is ordinary drafting practice — a sheet separated from its
+    fellows must still identify itself. -#}
+<div class="runfoot">
+  <div class="runfoot__row">
+    <div class="runfoot__note">
+      <div class="scale-bar">
+        <div class="scale-bar__ticks">
+          {%- for on in [true, false, true, false, true, false] %}
+          <div class="scale-bar__tick{% if on %} scale-bar__tick--on{% endif %}"></div>
+          {%- endfor %}
+        </div>
+        <div class="scale-bar__label">
+          0 &nbsp; 10 &nbsp; 20 &nbsp; 30 {{ revision.units or "mm" }}
+          {%- if revision.scale %} · SCALE {{ revision.scale }} AT {{ page_size|upper }}{% endif %}
+        </div>
+      </div>
+      <div style="margin-top:0.1in">{{ style.footer_note }}</div>
+    </div>
+    <table class="title-block">
+      <tr>
+        <td colspan="2">
+          <div class="title-block__key">Title</div>
+          <div class="title-block__value">{{ guide.title }}</div>
+        </td>
+      </tr>
+      <tr>
+        <td><span class="title-block__key">Doc / Rev</span><br>{{ guide.doc_number }} · {{ revision.rev_label }}</td>
+        <td><span class="title-block__key">Edition</span><br>{{ revision.revision_date.isoformat() }}</td>
+      </tr>
+      <tr>
+        <td><span class="title-block__key">Author</span><br>{{ revision.author_byline }}</td>
+        <td><span class="title-block__key">Approved</span><br>{{ revision.approved_by or "—" }}</td>
+      </tr>
+      <tr>
+        <td><span class="title-block__key">Status</span><br>{{ revision.status.value|upper }}</td>
+        <td class="title-block__page"></td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+{#- ------------------------------------------------------- masthead ------- -#}
+<div class="masthead">
+  {%- if logo_src %}
+  <div class="logo-tile"><img src="{{ logo_src }}" alt=""></div>
+  {%- endif %}
+  <div class="masthead__body">
+    <div class="eyebrow">{{ style.organisation }} · {{ style.department }} · {{ style.document_kind }}</div>
+    <div class="doc-title">
+      {%- for line in title_lines %}{{ line }}{% if not loop.last %}<br>{% endif %}{% endfor -%}
+    </div>
+    <div class="meta-row">
+      <span>Doc No. {{ guide.doc_number }}</span>
+      <span>Rev {{ revision.rev_label }}</span>
+      {%- if revision.units %}<span>Units {{ revision.units }}</span>{% endif %}
+      {%- if revision.scale %}<span>Scale {{ revision.scale }}</span>{% endif %}
+      {%- if revision.status.value != "published" %}<span>{{ revision.status.value|upper }}</span>{% endif %}
+    </div>
+  </div>
+</div>
+
+{%- if revision.purpose %}
+<div class="labelled-row">
+  <div class="row-label">Purpose</div>
+  <div style="font-size:10.5px;line-height:1.55">{{ revision.purpose }}</div>
+</div>
+{%- endif %}
+
+{#- --------------------------------------------- A / B / C panels --------- -#}
+{#- Each block is optional; the row collapses to whichever panels have content. -#}
+{%- set panel_letters = cycler("A", "B", "C") %}
+{%- if bom_items or required_tools or safety_warnings %}
+<div class="panels">
+  {%- if bom_items %}
+  <div class="panel">
+    <div class="panel__head">{{ panel_letters.next() }} · Bill of Materials</div>
+    <ul class="panel__list">
+      {%- for item in bom_items %}
+      <li><span class="item-index">{{ "%02d"|format(loop.index) }}</span> ·
+        {%- if item.quantity %} {{ item.quantity }}{% if item.unit %} {{ item.unit }}{% endif %}{% endif %}
+        {{ item.description }}
+        {%- if item.part_number %} <span class="item-index">[{{ item.part_number }}]</span>{% endif %}
+      </li>
+      {%- endfor %}
+    </ul>
+  </div>
+  {%- endif %}
+  {%- if required_tools %}
+  <div class="panel">
+    <div class="panel__head">{{ panel_letters.next() }} · Required Tools</div>
+    <ul class="panel__list">
+      {%- for tool in required_tools %}
+      <li><span class="item-index">{{ "%02d"|format(loop.index) }}</span> · {{ tool.name }}
+        {%- if tool.spec %}, {{ tool.spec }}{% endif %}
+      </li>
+      {%- endfor %}
+    </ul>
+  </div>
+  {%- endif %}
+  {%- if safety_warnings %}
+  <div class="panel panel--safety">
+    <div class="panel__head">{{ panel_letters.next() }} · Safety</div>
+    <ul class="panel__list">
+      {%- for warning in safety_warnings %}
+      <li><span class="severity severity--{{ warning.severity.value }}">{{ warning.severity.value }}</span>
+        {{ warning.text }}</li>
+      {%- endfor %}
+    </ul>
+  </div>
+  {%- endif %}
+</div>
+{%- endif %}
+
+{#- --------------------------------------------------- symbols legend ----- -#}
+{%- if style.symbols %}
+<div class="symbols">
+  <div class="row-label">Symbols</div>
+  <div class="symbols__list">
+    {%- for symbol in style.symbols %}
+    <span>
+      {%- if symbol.kind == "glyph" %}<b class="symbols__glyph">{{ symbol.glyph }}</b>
+      {%- elif symbol.kind == "index" %}<span class="bubble">1</span>
+      {%- elif symbol.kind == "hatch" %}<span class="hatch-swatch"></span>
+      {%- endif %}&nbsp; {{ symbol.meaning }}</span>
+    {%- endfor %}
+  </div>
+</div>
+{%- endif %}
+
+{#- ---------------------------------------------------------- steps ------- -#}
+{%- for step in steps %}
+<section class="step">
+  <div class="step__keep">
+    <div class="step__head">
+      <div class="step__badge">STEP {{ step.position }}</div>
+      <div class="step__title">{{ step.title }}</div>
+      <div class="step__leader"></div>
+      {%- if step.est_minutes %}<div class="step__est">EST. {{ step.est_minutes }} MIN</div>{% endif %}
+    </div>
+    <div class="plate plate--{{ step.plate_layout.value }}{% if style.plate_grid %} plate--grid{% endif %}">
+      <div class="plate__art">
+        {%- if step.art_svg %}{{ step.art_svg }}
+        {%- elif step.art_src %}<img src="{{ step.art_src }}" alt="">
+        {%- else %}<div class="plate__empty">No drawing for this step</div>
+        {%- endif %}
+      </div>
+      {%- for callout in step.callouts %}
+      <div class="callout__bubble" style="left:{{ callout.x_pct }}%;top:{{ callout.y_pct }}%">{{ callout.index }}</div>
+      {%- if callout.leader_length_pct %}
+      <div class="callout__leader callout__leader--{{ callout.leader_dir.value }}"
+           style="{% if callout.leader_dir.value == 'right' %}left:{{ callout.x_pct }}%{% else %}right:{{ 100 - callout.x_pct }}%{% endif %};top:{{ callout.y_pct }}%;width:{{ callout.leader_length_pct }}%"></div>
+      {%- endif %}
+      {%- endfor %}
+    </div>
+  </div>
+  <div class="step__body">
+    <div class="step__prose">{{ step.instructions }}</div>
+    {%- if step.callouts or step.side_note %}
+    <div class="step__side">
+      {%- if step.callouts %}
+      <ul class="callout-key">
+        {%- for callout in step.callouts %}
+        <li><span class="bubble">{{ callout.index }}</span> {{ callout.label }}</li>
+        {%- endfor %}
+      </ul>
+      {%- endif %}
+      {%- if step.side_note %}{{ step.side_note }}{% endif %}
+    </div>
+    {%- endif %}
+  </div>
+</section>
+{%- endfor %}
+
+{#- --------------------------------------------------- record page -------- -#}
+{#- Blank by design: these are completed with a pen after printing. -#}
+<section class="record">
+  <div class="record__section">
+    <div class="record__head">D · Recorded Results</div>
+    <table class="grid-table">
+      <thead>
+        <tr><th>Step</th><th>Observation</th><th>Result</th><th>Initials</th></tr>
+      </thead>
+      <tbody>
+        {%- for step in steps %}
+        <tr>
+          <td>{{ step.position }}</td>
+          <td>{{ step.title }}</td>
+          <td class="blank"></td>
+          <td class="blank"></td>
+        </tr>
+        {%- endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {%- if history %}
+  <div class="record__section">
+    <div class="record__head">E · Revision History</div>
+    <table class="grid-table">
+      <thead>
+        <tr><th>Rev</th><th>Date</th><th>Change</th><th>By</th></tr>
+      </thead>
+      <tbody>
+        {%- for entry in history %}
+        <tr>
+          <td>{{ entry.rev_label }}</td>
+          <td>{{ entry.revision_date.isoformat() }}</td>
+          <td>{{ entry.change_note or "—" }}</td>
+          <td>{{ entry.author_byline }}</td>
+        </tr>
+        {%- endfor %}
+      </tbody>
+    </table>
+  </div>
+  {%- endif %}
+
+  <div class="record__foot">
+    <div style="flex:1;display:flex;flex-direction:column">
+      <div class="record__head">F · Notes</div>
+      <div class="notes-field"></div>
+    </div>
+    <div class="record__aside">
+      {%- if qr_svg %}
+      <div class="qr-panel">
+        {{ qr_svg }}
+        <div class="qr-panel__caption">SUPPORT + LATEST EDITION<br>{{ support_url }}</div>
+      </div>
+      {%- endif %}
+      <div class="signoff">
+        <div class="signoff__head">G · Sign-off</div>
+        <div class="signoff__field">CARRIED OUT BY<div class="signoff__rule"></div></div>
+        <div class="signoff__field">CHECKED BY<div class="signoff__rule"></div></div>
+        <div class="signoff__field">DATE<div class="signoff__rule"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div style="font-size:8px;letter-spacing:0.08em;color:var(--muted);margin-top:0.12in">
+    {{ style.retention_note }}
+  </div>
+</section>
+
+</body>
+</html>

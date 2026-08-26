@@ -31,3 +31,12 @@ __pycache__/
 node_modules/
 .coverage
 coverage.xml
+junit.xml
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# === This service's own runtime state ===
+# The asset volume: uploaded sketches, redrawn SVGs, rendered PDFs. Content-addressed and
+# potentially large; it is backed-up data, not source.
+var/

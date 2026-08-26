@@ -4,11 +4,18 @@
 - `app/routers/` - FastAPI route handlers only, no business logic
 - `app/services/` - business logic, no direct DB access
 - `app/repositories/` - all DB queries via SQLAlchemy
-- `tests/` mirrors `app/` structure
+- `app/rendering/` - the sheet: `render.py`, `templates/` (Jinja + CSS), `fonts/` (vendored)
+- `app/sketch/` - the Claude redraw client, its versioned prompts, and the SVG sanitiser
+- `app/storage.py` - content-addressed asset store; bytes on disk, paths in the database
+- `tests/` - three tiers (`unit/`, `api/`, `integration/`), not a mirror of `app/`
 
 ## Commands
 - Run: `uv run uvicorn app.main:api --reload`
-- Test: `uv run pytest tests/`
+- Test: `uv run pytest tests/` (needs Postgres; `TEST_DATABASE_URL` locates it)
+- Fast tier: `uv run pytest tests/ -m "not integration" --no-cov`
+  (`--no-cov` is required — the 85% floor is set against the *full* run, so a subset fails it)
+- Migrations: `uv run alembic upgrade head`, `uv run alembic check`
+- Preview a sheet without rendering: `GET /api/revisions/{id}/preview.html`
 
 ## Conventions (overrides or additions to global)
 - All DB models live in `app/models/` and inherit from `Base` in `app/database.py`.
@@ -51,16 +58,101 @@ landing N commits), CI `test` must be green, linear history. See
 
 **Record which CI-gating design this repo uses**, because it is invisible otherwise:
 
-- [ ] `on: push` — requires the `Require CI to pass before merging to main` ruleset to exist
-      on this repo. Verify: `gh api /repos/Glitchedpixel-io/<repo>/rulesets | jq '.[].name'`
+- [x] `on: push` — requires the `Require CI to pass before merging to main` ruleset to exist
+      on this repo. Verified 2026-08-26 at repo creation: `new-repo.sh` applied it and
+      confirmed `test` is a required check.
+      Re-verify: `gh api /repos/Glitchedpixel-io/guides-api/rulesets | jq '.[].name'`
 - [ ] `on: workflow_run [Tests]` + conclusion guard — safe without any ruleset.
+
+There is **no `deploy.yml` yet**. Nothing ships from this repo automatically.
 
 > Two repos shipped with `on: push` and no ruleset, able to tag and deploy a failing build,
 > because they were scaffolded from a sibling whose safety lived in GitHub settings rather
 > than in the copied files. Tick a box above, and check it.
 
 ## Known gotchas
-- The test suite requires a running Postgres instance. Use TEST_DATABASE_URL environment variable to locate a suitable instance.
+
+Each of these cost a debugging session while building the sheet. They are all silent
+failures — nothing raised, the output was just wrong.
+
+- **The test suite needs Postgres.** `TEST_DATABASE_URL` locates it; in the dev container
+  it is already set, pointing at `db:5432`. `localhost` is *not* it — probing localhost
+  finds nothing and reads as "no database available".
+
+- **WeasyPrint needs Pango and Cairo**, which are C libraries, not wheels. Without them the
+  import succeeds and the first render fails.
+
+- **`position: fixed` is laid out against each page's *content* area, not the paper.**
+  Offsets are therefore measured from the content origin and are negative where the sheet
+  furniture sits out in the margin. The consequence that matters: **page margins must be
+  identical on every page.** A `@page :first` margin override slides the frame and the
+  registration marks with it, so page 1's frame lands somewhere page 2's does not. The
+  geometry is computed in `app/rendering/render.py:page_geometry` and injected into the
+  template for exactly this reason — do not hardcode it in the CSS.
+
+- **WeasyPrint ignores `background-size` on a gradient**, in both the shorthand
+  (`background: linear-gradient(...) center/1px 100%`) and the longhand form. The canvas
+  drew its registration crosshairs that way; each one rendered as a solid black square.
+  They are two child elements now.
+
+- **The compact two-position colour-stop syntax is ignored too.** `repeating-linear-gradient(
+  rgba(0,0,0,.07) 0 1px, transparent 1px 0.125in)` renders as nothing at all — that is one
+  declaration, and it silently took out the plate grid, the safety-panel hatch and the ruled
+  notes field together. Spell out both ends of every stop.
+
+- **CSS grid is unreliable**; a `grid-column: 1 / -1` cell collapses to zero width. The
+  title block is a `<table>`. Its table layout is solid — prefer tables for anything grid-shaped.
+
+- **A flex container does not fragment.** When content does not fit the remaining column it
+  overruns into the footer band and prints on top of the title block instead of breaking.
+  `.step__body` carries `break-inside: avoid` so it moves to the next page instead.
+
+- **An empty flex item has no baseline**, and under `align-items: baseline` WeasyPrint drops
+  it far down the page — the dotted step leader printed straight across the drawing plate.
+  The step header centres instead.
+
+- **`text-wrap: balance` is a no-op**, so the masthead's two-line title needs an explicit
+  break point. It is stored as `guides.title_break_after`, a word index.
+
+- **Reading an ORM attribute after `commit()` raises `MissingGreenlet`.** With
+  `expire_on_commit=True` the commit expires every attribute, so touching `orm.id`
+  afterwards triggers a lazy refresh from synchronous context. Flush, read the generated id
+  into a plain `int`, *then* commit. `app/repositories/step_repo.py` shows the shape.
+
+- **Renumbering an ordered collection needs two phases.** `unique (revision_id, position)`
+  means assigning final positions directly collides the moment two rows swap. Everything is
+  parked on negative positions first.
+
+- **U+2300 (`⌀`, DIAMETER SIGN) has no glyph in either vendored font.** The canvas used it
+  in the symbols legend and it looked right in a browser, where a system fallback supplied
+  it; the PDF would have printed tofu. The sheet uses `Ø↔` instead, and
+  `tests/unit/test_font_coverage.py` fails if any legend glyph is unrenderable. WeasyPrint
+  substitutes silently, so nothing else would catch it.
+
+## The sheet template
+
+`app/rendering/templates/` is the Claude Design canvas **"Blueprint instruction template"**
+(project `60a23956-721f-4c9c-85e3-ffd66c812fe8`), flattened for print. The canvas remains
+the design source of truth; it is not synced automatically, so a design change means
+re-reading it and re-flattening.
+
+Three things changed in the flattening, deliberately:
+
+1. **Pagination is CSS, not fixed artboards.** The canvas hard-codes three fixed-height
+   pages with hand-repeated headers and a literal `PAGE 1 OF 3`. Here the frame and
+   registration marks are `position: fixed` (WeasyPrint repeats those per page), the header
+   and footer are running elements in `@page` margin boxes, and the page counter is
+   `counter(page)`/`counter(pages)`. Steps then simply flow.
+2. **One footer on every page**, rather than a title block on page 1 and a compact strip
+   after. Uniform margins are required by the fixed-frame constraint above, and a title
+   block on every sheet is ordinary drafting practice — a sheet separated from its fellows
+   must still identify itself.
+3. **Fonts are vendored**, not loaded from the Google Fonts CDN. A PDF whose typography
+   depends on network reachability is not reproducible, and production has no egress.
+
+`GD_TEMPLATE_VERSION` is recorded on every render. **Bump it whenever the template
+changes**: the same revision rendered under a restyled template is a different document, and
+without the version there is no way to tell which one someone is holding.
 
 ## Application Configuration & Environment Management
 
