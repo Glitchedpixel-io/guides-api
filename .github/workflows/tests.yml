@@ -27,7 +27,7 @@ jobs:
       # a live call would spend money and turn a provider hiccup into a red build.
       GD_SKETCH_ENABLED: "false"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # WeasyPrint renders through Pango and Cairo, which are C libraries rather than
       # wheels. Without these the import succeeds and the first render fails, so the
@@ -40,12 +40,12 @@ jobs:
             libcairo2 libgdk-pixbuf-2.0-0
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -87,15 +87,16 @@ jobs:
           --junitxml=junit.xml -o junit_family=legacy
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           token: "${{ secrets.CODECOV_TOKEN }}"
           files: ./coverage.xml
           fail_ci_if_error: false
 
       - name: Upload test results
-        uses: codecov/test-results-action@v1
+        uses: codecov/codecov-action@v7
         if: ${{ !cancelled() }}
         with:
+          report_type: test_results
           token: "${{ secrets.CODECOV_TOKEN }}"
           files: ./junit.xml
