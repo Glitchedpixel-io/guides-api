@@ -1,0 +1,5 @@
+# Paths that release even when they are only Markdown (claude-skills
+# skills/apply-versioning/VERSIONING.md, "What gets released").
+# The sketch prompts are loaded at runtime (app/sketch/client.py), so editing one changes
+# behaviour.
+app/sketch/prompts/**
