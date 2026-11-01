@@ -10,13 +10,20 @@
 # `audit-repo-standards` skill, or use the `workflow_run` variant in `setup-versioning.md`.
 name: Version Bump
 
+# No `paths-ignore`. A change that is only notes for people or Claude (Markdown, or
+# `.claude/`) is still not released, but the "Ship or stand down" step decides that,
+# because a path filter cannot read the PR title: sentinel-core #439 changed only
+# docs/DECISIONS.md, was titled [major], and was meant to cut v1.0.0. A filter would
+# have dropped it without a word. Never filter the required `test` workflow either, or
+# a docs-only PR waits forever on a check that never runs.
 on:
   push:
     branches: [main]
 
 # Serialize: two merges seconds apart would otherwise both read the same "latest tag"
 # and compute the same next version. `cancel-in-progress: false` is not optional —
-# cancelling a version bump loses a release.
+# cancelling a queued version bump loses a release. (A run that cancels *itself* below
+# is different: it has already decided there is nothing to release.)
 concurrency:
   group: version-bump-main
   cancel-in-progress: false
@@ -27,6 +34,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: read # needed to look up the source PR's actual title
+      actions: write # needed for a run to cancel itself when the change ships nothing
     steps:
       - uses: actions/checkout@v7
         with:
@@ -36,19 +44,11 @@ jobs:
           # still valid YAML but breaks the audit's literal DEPTH0 grep (library #81).
           fetch-depth: 0
 
-      - name: Compute next tag
-        id: next
+      - name: Find the bump source
+        id: source
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Take the highest existing vX.Y.Z tag and bump it. The bump level comes from
-          # the source PR's title:
-          #   [major] -> X+1.0.0   [minor] -> X.Y+1.0   default -> X.Y.Z+1
-          latest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
-          latest=${latest:-v0.0.0}
-          echo "Latest tag: $latest"
-          IFS='.' read -r major minor patch <<< "${latest#v}"
-
           # A squash-merge commit subject only carries the PR title when the PR had more
           # than one commit; for a single-commit PR, GitHub instead defaults the squash
           # subject to that commit's own message, silently dropping a [minor]/[major]
@@ -66,11 +66,87 @@ jobs:
             fi
           fi
           echo "Bump source: $msg"
+          {
+            echo "msg<<__BUMP_SOURCE__"
+            echo "$msg"
+            echo "__BUMP_SOURCE__"
+          } >> "$GITHUB_OUTPUT"
 
-          if echo "$msg" | grep -qiE '\[major\]'; then
+      - name: Ship or stand down
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+          MSG: ${{ steps.source.outputs.msg }}
+        run: |
+          # A change ships unless it touched only Markdown or .claude/ AND its bump
+          # source carries no [minor]/[major]. A marker is a deliberate release: a D-*
+          # in a register can be the milestone itself (sentinel-core #439, v1.0.0).
+          #
+          # .github/release-paths (optional, one git glob per line, # comments) lists
+          # paths that ship whatever their extension: `**` in a repo whose Markdown IS
+          # the product (claude-skills), `app/prompts/**` for prompts read at runtime.
+          #
+          # Anything this step cannot work out ships: a release too many is a patch
+          # number; a release too few is a lost one.
+          if echo "$MSG" | grep -qiE '\[(major|minor)\]'; then
+            echo "Ships: the bump source carries a marker"
+            exit 0
+          fi
+          if ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            echo "Ships: no previous commit to compare with (${BEFORE:-none})"
+            exit 0
+          fi
+          shipping=$(git diff --name-only "$BEFORE" "$GITHUB_SHA" -- . \
+            ':(exclude,glob)**/*.md' ':(exclude,glob).claude/**')
+          if [ -f .github/release-paths ]; then
+            specs=()
+            while IFS= read -r line; do
+              line="${line%%#*}"
+              line="$(echo "$line" | xargs)"
+              [ -n "$line" ] && specs+=(":(glob)$line")
+            done < .github/release-paths
+            if [ ${#specs[@]} -gt 0 ]; then
+              listed=$(git diff --name-only "$BEFORE" "$GITHUB_SHA" -- "${specs[@]}")
+              shipping=$(printf '%s\n%s\n' "$shipping" "$listed" | sed '/^$/d' | sort -u)
+            fi
+          fi
+          if [ -n "$shipping" ]; then
+            echo "Ships: $(echo "$shipping" | wc -l) file(s) that are not only notes, e.g."
+            echo "$shipping" | head -5
+            exit 0
+          fi
+
+          # Nothing ships. End the run as CANCELLED, never as success: every downstream
+          # Publish/Deploy in the org fires on this workflow's completion and proceeds
+          # only on `conclusion == 'success'`. A success with no tag turns the
+          # --points-at / --exact-match ones red, and deploys the untagged commit in
+          # the ones that resolve no tag at all.
+          echo "::notice::Only Markdown or .claude/ changed and the title has no [minor]/[major]: nothing to release. Cancelling this run so nothing downstream starts."
+          gh run cancel "$GITHUB_RUN_ID"
+          # Wait to be cancelled. Exiting first would let the run finish as success,
+          # which is the one outcome that must not happen; so if the cancel never
+          # lands, fail instead.
+          for _ in $(seq 1 60); do sleep 5; done
+          echo "::error::the run did not cancel within 5 minutes; failing so nothing downstream starts"
+          exit 1
+
+      - name: Compute next tag
+        id: next
+        env:
+          MSG: ${{ steps.source.outputs.msg }}
+        run: |
+          # Take the highest existing vX.Y.Z tag and bump it. The bump level comes from
+          # the source PR's title (see "Find the bump source"):
+          #   [major] -> X+1.0.0   [minor] -> X.Y+1.0   default -> X.Y.Z+1
+          latest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
+          latest=${latest:-v0.0.0}
+          echo "Latest tag: $latest"
+          IFS='.' read -r major minor patch <<< "${latest#v}"
+
+          if echo "$MSG" | grep -qiE '\[major\]'; then
             echo "Bump level: major"
             next="$((major + 1)).0.0"
-          elif echo "$msg" | grep -qiE '\[minor\]'; then
+          elif echo "$MSG" | grep -qiE '\[minor\]'; then
             echo "Bump level: minor"
             next="${major}.$((minor + 1)).0"
           else
